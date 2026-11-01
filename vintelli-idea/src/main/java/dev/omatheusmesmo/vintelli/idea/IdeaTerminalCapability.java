@@ -89,7 +89,13 @@ public final class IdeaTerminalCapability implements TerminalCapability {
             McpJsonMapper mapper = client.jsonMapper();
             IdeaTerminalResult result = mapper.readValue(call.resultText(), IdeaTerminalResult.class);
             String output = result.command_output() == null ? "" : result.command_output();
-            int exitCode = result.command_exit_code() == null ? 0 : result.command_exit_code();
+            if (Boolean.TRUE.equals(result.is_timed_out())) {
+                return CapabilityResult.failed(new CapabilityFailure("IDEA terminal command timed out", output));
+            }
+            if (result.command_exit_code() == null) {
+                return CapabilityResult.failed(new CapabilityFailure("IDEA terminal result is missing an exit code", output));
+            }
+            int exitCode = result.command_exit_code();
             return CapabilityResult.ok(new TerminalResult(TerminalOutcome.EXECUTED, exitCode, output));
         } catch (Exception failure) {
             return CapabilityResult.failed(new CapabilityFailure("Cannot parse terminal result", failure.getMessage()));

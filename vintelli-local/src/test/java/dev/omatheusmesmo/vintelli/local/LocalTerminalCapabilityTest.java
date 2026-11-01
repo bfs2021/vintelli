@@ -10,13 +10,13 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -135,21 +135,29 @@ class LocalTerminalCapabilityTest {
         assertFalse(started.isFailure(), started.failureOf().map(Object::toString).orElse(""));
         TerminalSession session = ((CapabilityResult.Ok<TerminalSession>) started).value();
         try {
-            session.write((workingDirectoryCommand() + "\r").getBytes(StandardCharsets.UTF_8));
+            String projectMarker = "VINTELLI_CWD_" + UUID.randomUUID();
+            String outsideMarker = "VINTELLI_CWD_" + UUID.randomUUID();
+            String projectOutput = project.toRealPath().toString();
+            String outsideOutput = outside.toRealPath().toString();
+            session.write((workingDirectoryCommand(projectMarker) + "\r").getBytes(StandardCharsets.UTF_8));
             TestProcesses.awaitUntil(Duration.ofSeconds(10),
-                    () -> outputContainsPath(session, project));
+                    () -> outputContainsPath(session, projectOutput)
+                            && outputContainsLine(session, projectMarker));
 
             session.write((changeDirectoryCommand(outside) + "\r").getBytes(StandardCharsets.UTF_8));
-            session.write((workingDirectoryCommand() + "\r").getBytes(StandardCharsets.UTF_8));
+            session.write((workingDirectoryCommand(outsideMarker) + "\r").getBytes(StandardCharsets.UTF_8));
             TestProcesses.awaitUntil(Duration.ofSeconds(10),
-                    () -> outputContainsPath(session, outside));
+                    () -> outputContainsPath(session, outsideOutput)
+                            && outputContainsLine(session, outsideMarker));
         } finally {
             session.close();
         }
     }
 
-    private static String workingDirectoryCommand() {
-        return TestProcesses.isWindows() ? "echo %CD%" : "pwd";
+    private static String workingDirectoryCommand(String marker) {
+        return TestProcesses.isWindows()
+                ? "echo %CD% & echo " + marker
+                : "pwd; echo " + marker;
     }
 
     private static String changeDirectoryCommand(Path directory) {
@@ -160,27 +168,19 @@ class LocalTerminalCapabilityTest {
         return "cd '" + value.replace("'", "'\\''") + "'";
     }
 
-    private static boolean outputContainsPath(TerminalSession session, Path expected) {
-        String normalizedExpected = normalizePath(expected.getFileName().toString());
+    private static boolean outputContainsPath(TerminalSession session, String expected) {
+        String normalizedExpected = normalizePath(expected);
         for (String line : session.output()) {
-            String value = line.strip();
-            String normalizedValue = normalizePath(value);
-            boolean match = normalizedValue.contains(normalizedExpected);
-            if (match) {
+            if (normalizePath(line.strip()).equals(normalizedExpected)) {
                 return true;
-            }
-            // On Windows, also try resolving the path to handle short names
-            if (TestProcesses.isWindows()) {
-                try {
-                    String resolved = normalizePath(Path.of(value).toRealPath().toString());
-                    if (resolved.equals(normalizedExpected) || resolved.contains(normalizedExpected)) {
-                        return true;
-                    }
-                } catch (IOException | InvalidPathException ignored) {
-                }
             }
         }
         return false;
+    }
+
+    private static boolean outputContainsLine(TerminalSession session, String expected) {
+        return session.output().stream().map(String::strip)
+                .anyMatch(line -> line.equals(expected));
     }
 
     private static String normalizePath(String path) {
